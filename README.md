@@ -1,8 +1,8 @@
 # ambx-sound-light
-Turns the [Philips AmBX Premium Kit][https://en.wikipedia.org/wiki/AmBX] Speakers into a light organ, using
+Turns the [Philips AmBX Premium Kit](https://en.wikipedia.org/wiki/AmBX) Speakers into a light organ, using
  * Raspberry Pi
- * Bluetooth Audio receiver
- * USB Audio card
+ * Philips [AEA2500](http://www.philips.de/c-p/AEA2500_12/bluetooth-hifi-adapter) Bluetooth Audio receiver
+ * [CSL](http://www.amazon.de/dp/B00C7LXUDY) USB Audio I/O card
 
 
 ## Installation
