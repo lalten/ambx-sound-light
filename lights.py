@@ -5,6 +5,7 @@ from ambx.ambx import AMBX, Lights
 import pyaudio # from http://people.csail.mit.edu/hubert/pyaudio/
 import numpy   # from http://numpy.scipy.org/
 import struct
+import audioop
 
 lights = [Lights.LEFT, Lights.RIGHT, Lights.WWLEFT, Lights.WWCENTER, Lights.WWRIGHT]
 decay = 0.5
@@ -31,82 +32,111 @@ def list_devices(p):
 
 def arduino_soundlight(p,device=0):
 
-	#    p = pyaudio.PyAudio()
-	print "choosing device: "+str(device)+': '+pyaudio.PyAudio().get_device_info_by_index(device)['name']
+    #    p = pyaudio.PyAudio()
+    print "choosing device: "+str(device)+': '+pyaudio.PyAudio().get_device_info_by_index(device)['name']
 
-	chunk      = 2**12 # Change if too fast/slow, never less than 2**11
-	scale      = 10    # Change if too dim/bright
-	exponent   = 1     # Change if too little/too much difference between loud and quiet sounds
-	#samplerate = 44100
-	samplerate = int(p.get_device_info_by_index(device)['defaultSampleRate'])
-	print "samplerate: %d"%samplerate
-	# CHANGE THIS TO CORRECT INPUT DEVICE
-	# Enable stereo mixing in your sound card
-	# to make you sound output an input
-	# Use list_devices() to list all your input devices
-	#device   = 14 #'dmix'
+    chunk      = 2**12 # Change if too fast/slow, never less than 2**11
+    scale      = 10    # Change if too dim/bright
+    exponent   = 1     # Change if too little/too much difference between loud and quiet sounds
+    #samplerate = 44100
+    samplerate = int(p.get_device_info_by_index(device)['defaultSampleRate'])
+    print "samplerate: %d"%samplerate
+    # CHANGE THIS TO CORRECT INPUT DEVICE
+    # Enable stereo mixing in your sound card
+    # to make you sound output an input
+    # Use list_devices() to list all your input devices
+    #device   = 14 #'dmix'
 
-	stream = p.open(format = pyaudio.paInt16,
-					channels = 1,
-					rate = samplerate,
-					input = True,
-					frames_per_buffer = chunk,
-					input_device_index = device)
+    stream = p.open(format = pyaudio.paInt16,
+                    channels = 1,
+                    rate = samplerate,
+                    input = True,
+                    frames_per_buffer = chunk,
+                    input_device_index = device)
 
-	#print "Starting, use Ctrl+C to stop"
-	dev = None
-	try:
-		dev = AMBX(0)
+    #print "Starting, use Ctrl+C to stop"
+    dev = None
+    try:
+        dev = AMBX(0)
 
-		for light in lights:
-			try:
-				dev.set_color_rgb8(light, [255, 255, 255])
-			except IOError:
-				print 'USB Error'
-				break
-		
-		bass_temp = 0
-		mid_temp = 0
-		treble_temp = 0
+        for light in lights:
+            try:
+                dev.set_color_rgb8(light, [255, 255, 255])
+            except IOError:
+                print 'USB Error'
+                break
 
-		while True:
-			try:
-				data  = stream.read(chunk)
-			except IOError:
-				print 'Overflow'
+        bass_temp = 0
+        mid_temp = 0
+        treble_temp = 0
 
-			# Do FFT
-			[bass, mid, treble] = calculate_levels(data, chunk, samplerate)
+        rms_temp = 0;
+        max_rms = 0;
 
-			# nice levels
-			bass    = max(min(int(max(min(bass  / scale, 1.0), 0.0)**exponent*250 + decay*bass_temp     ),255),0)
-			mid     = max(min(int(max(min(mid   / scale, 1.0), 0.0)**exponent*250 + decay*mid_temp      ),255),0)
-			treble  = max(min(int(max(min(treble/ scale, 1.0), 0.0)**exponent*250 + decay*treble_temp   ),255),0)
-			bass_temp = bass
-			mid_temp = mid
-			treble_temp = treble
+        while True:
+            try:
+                data  = stream.read(chunk)
+            except IOError:
+                print 'Overflow'
 
-			#print bass, mid, treble
+            # Do FFT
+            [bass, mid, treble] = calculate_levels(data, chunk, samplerate)
 
-			for light in lights:
-				try:
-					dev.set_color_rgb8(light, [bass, mid, treble])
-				except IOError:
-					print 'USB Error'
+            # Get % volume
+            rms = audioop.rms(data, 2)
+            rms = rms_temp * 0.95 + 0.05 * rms # low pass filter
+            #if max_rms < rms:
+            #    max_rms = rms
+            #else:
+            #    max_rms = 0.99 * max_rms # decay the saved max volume over time
 
-	except IndexError:
-		if dev is None:
-			print 'No AmbX found!'
-			
-	except KeyboardInterrupt:
-		pass
-	finally:
-		print "…Stop"
-		stream.close()
-		p.terminate()
-	if dev is not None:
-		for light in lights:
-			dev.set_color_rgb8(light, [0, 0, 0])
+            # what kind of volumes come streamed in
+            rms_min = 16
+            rms_max = 1400
+            scale = 5.0 + 20 * (rms-rms_min)/(rms_max-rms_min)
+
+            # if there is no sound input, switch off lights
+            if rms < 8:
+                #print 'off: ', rms
+                for light in lights:
+                    try:
+                        dev.set_color_rgb8(light, [0, 0, 0])
+                    except IOError:
+                        print 'USB Error'
+            else:
+
+                #print scale, max_rms
+
+
+                # nice levels
+                bass    = max(min(int(max(min(bass  / scale, 1.0), 0.0)**exponent*255 + decay*bass_temp     ),255),0)
+                mid     = max(min(int(max(min(mid   / scale, 1.0), 0.0)**exponent*255 + decay*mid_temp      ),255),0)
+                treble  = max(min(int(max(min(treble/ scale, 1.0), 0.0)**exponent*255 + decay*treble_temp   ),255),0)
+                bass_temp = bass
+                mid_temp = mid
+                treble_temp = treble
+
+                #print bass, mid, treble
+
+                for light in lights:
+                    try:
+                        dev.set_color_rgb8(light, [bass, mid, treble])
+                    except IOError:
+                        print 'USB Error'
+
+    except IndexError:
+        if dev is None:
+            print 'No AmbX found!'
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print "…Stop"
+        stream.close()
+        p.terminate()
+    if dev is not None:
+        for light in lights:
+            dev.set_color_rgb8(light, [0, 0, 0])
 
 
 
